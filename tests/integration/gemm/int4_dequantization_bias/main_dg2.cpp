@@ -19,7 +19,7 @@
 // #define UT_DEBUG 1
 using namespace gpu::xetla;
 //The number of times the kernel is executed
-constexpr int ITER = 100;
+constexpr int ITER = 3000;
 
 class test1 {
 public:
