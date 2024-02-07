@@ -368,32 +368,32 @@ public:
         SW_BARRIER();
 #pragma unroll
         for (uint32_t i = 0; i < stages; i++) {
-            subgroup::tile_prefetch<cache_hint::cached, cache_hint::cached>(
-                    matA_prefetch_payload);
+        //     subgroup::tile_prefetch<cache_hint::cached, cache_hint::cached>(
+        //             matA_prefetch_payload);
             subgroup::tile_prefetch<cache_hint::cached, cache_hint::cached>(
                     matB_prefetch_payload);
             // TODO 1D prefetch need pack to U32/U64
-            subgroup::tile_prefetch<cache_hint::cached, cache_hint::cached>(
-                    scale_prefetch_payload);
-            if constexpr (compute_policy::quant_type
-                    != quant_mode::S4_FULLRANGE_NO_ZP) {
-                // TODO 1D prefetch need pack to U32/U64
-                subgroup::tile_prefetch<cache_hint::cached, cache_hint::cached>(
-                        zero_pt_prefetch_payload);
-            }
-            scale_prefetch_addr_i++;
-            matA_prefetch_payload.template update_tdesc<update_dir_a>(
-                    matA_t::tile_size_x);
+        //     subgroup::tile_prefetch<cache_hint::cached, cache_hint::cached>(
+                //     scale_prefetch_payload);
+        //     if constexpr (compute_policy::quant_type
+        //             != quant_mode::S4_FULLRANGE_NO_ZP) {
+        //         // TODO 1D prefetch need pack to U32/U64
+        //         subgroup::tile_prefetch<cache_hint::cached, cache_hint::cached>(
+        //                 zero_pt_prefetch_payload);
+        //     }
+        //     scale_prefetch_addr_i++;
+        //     matA_prefetch_payload.template update_tdesc<update_dir_a>(
+                //     matA_t::tile_size_x);
             matB_prefetch_payload.template update_tdesc<update_dir_b>(
                     matB_t::tile_size_y);
-            if ((scale_prefetch_addr_i % scale_addr_update_freq) == 0) {
-                scale_prefetch_payload
-                        .template update_tdesc<tdesc_update_dir::y_dir>(
-                                scale_t::tile_size_y);
-                zero_pt_prefetch_payload
-                        .template update_tdesc<tdesc_update_dir::y_dir>(
-                                zero_pt_t::tile_size_y);
-            }
+        //     if ((scale_prefetch_addr_i % scale_addr_update_freq) == 0) {
+        //         scale_prefetch_payload
+        //                 .template update_tdesc<tdesc_update_dir::y_dir>(
+        //                         scale_t::tile_size_y);
+        //         zero_pt_prefetch_payload
+        //                 .template update_tdesc<tdesc_update_dir::y_dir>(
+        //                         zero_pt_t::tile_size_y);
+        //     }
         }
 
         for (uint32_t i = 0; i < args.inner_loop_count; i++) {
@@ -419,20 +419,20 @@ public:
             scale_load_addr_i++;
             SW_BARRIER();
             if constexpr (stages != 0) {
-                subgroup::tile_prefetch<cache_hint::cached, cache_hint::cached>(
-                        matA_prefetch_payload);
+                // subgroup::tile_prefetch<cache_hint::cached, cache_hint::cached>(
+                //         matA_prefetch_payload);
                 subgroup::tile_prefetch<cache_hint::cached, cache_hint::cached>(
                         matB_prefetch_payload);
                 // TODO 1D prefetch need pack to U32/U64
-                subgroup::tile_prefetch<cache_hint::cached, cache_hint::cached>(
-                        scale_prefetch_payload);
-                if constexpr (compute_policy::quant_type
-                        != quant_mode::S4_FULLRANGE_NO_ZP) {
-                    // TODO 1D prefetch need pack to U32/U64
-                    subgroup::tile_prefetch<cache_hint::cached,
-                            cache_hint::cached>(zero_pt_prefetch_payload);
-                }
-                scale_prefetch_addr_i++;
+                // subgroup::tile_prefetch<cache_hint::cached, cache_hint::cached>(
+                //         scale_prefetch_payload);
+                // if constexpr (compute_policy::quant_type
+                //         != quant_mode::S4_FULLRANGE_NO_ZP) {
+                //     // TODO 1D prefetch need pack to U32/U64
+                //     subgroup::tile_prefetch<cache_hint::cached,
+                //             cache_hint::cached>(zero_pt_prefetch_payload);
+                // }
+                // scale_prefetch_addr_i++;
             }
             SW_BARRIER();
             matA_payload.template update_tdesc<update_dir_a>(
@@ -446,18 +446,18 @@ public:
                         zero_pt_t::tile_size_y);
             }
             if constexpr (stages != 0) {
-                matA_prefetch_payload.template update_tdesc<update_dir_a>(
-                        matA_t::tile_size_x);
+                // matA_prefetch_payload.template update_tdesc<update_dir_a>(
+                //         matA_t::tile_size_x);
                 matB_prefetch_payload.template update_tdesc<update_dir_b>(
                         matB_t::tile_size_y);
-                if ((scale_prefetch_addr_i % scale_addr_update_freq) == 0) {
-                    scale_prefetch_payload
-                            .template update_tdesc<tdesc_update_dir::y_dir>(
-                                    scale_t::tile_size_y);
-                    zero_pt_prefetch_payload
-                            .template update_tdesc<tdesc_update_dir::y_dir>(
-                                    zero_pt_t::tile_size_y);
-                }
+                // if ((scale_prefetch_addr_i % scale_addr_update_freq) == 0) {
+                //     scale_prefetch_payload
+                //             .template update_tdesc<tdesc_update_dir::y_dir>(
+                //                     scale_t::tile_size_y);
+                //     zero_pt_prefetch_payload
+                //             .template update_tdesc<tdesc_update_dir::y_dir>(
+                //                     zero_pt_t::tile_size_y);
+                // }
             }
             SW_BARRIER();
             matA_acc_t matA_acc;
