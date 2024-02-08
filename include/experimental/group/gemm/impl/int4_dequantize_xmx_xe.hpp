@@ -363,8 +363,8 @@ public:
         nbarrier_b.init_nbarrier(sg_idx + barrier_count_y + nbarrier_base,
                 nbarrier_role::producer_consumer);
 
-        int scale_prefetch_addr_i = 0;
-        int scale_load_addr_i = 0;
+        int scale_prefetch_addr_i = args.matB_base_desc.coord.y;
+        int scale_load_addr_i = args.matB_base_desc.coord.y;
         SW_BARRIER();
 #pragma unroll
         for (uint32_t i = 0; i < stages; i++) {
@@ -381,12 +381,12 @@ public:
         //         subgroup::tile_prefetch<cache_hint::cached, cache_hint::cached>(
         //                 zero_pt_prefetch_payload);
         //     }
-        //     scale_prefetch_addr_i++;
+        //     scale_prefetch_addr_i+=dequant_s;
         //     matA_prefetch_payload.template update_tdesc<update_dir_a>(
                 //     matA_t::tile_size_x);
             matB_prefetch_payload.template update_tdesc<update_dir_b>(
                     matB_t::tile_size_y);
-        //     if ((scale_prefetch_addr_i % scale_addr_update_freq) == 0) {
+        //     if ((scale_prefetch_addr_i % dequant_s) == 0) {
         //         scale_prefetch_payload
         //                 .template update_tdesc<tdesc_update_dir::y_dir>(
         //                         scale_t::tile_size_y);
@@ -416,7 +416,7 @@ public:
                 subgroup::tile_load<cache_hint::cached, cache_hint::cached>(
                         zero_pt, zero_pt_payload);
             }
-            scale_load_addr_i++;
+            scale_load_addr_i+=matB_t::tile_size_y;
             SW_BARRIER();
             if constexpr (stages != 0) {
                 // subgroup::tile_prefetch<cache_hint::cached, cache_hint::cached>(
@@ -432,14 +432,14 @@ public:
                 //     subgroup::tile_prefetch<cache_hint::cached,
                 //             cache_hint::cached>(zero_pt_prefetch_payload);
                 // }
-                // scale_prefetch_addr_i++;
+                // scale_prefetch_addr_i+=dequant_s;
             }
             SW_BARRIER();
             matA_payload.template update_tdesc<update_dir_a>(
                     matA_t::tile_size_x);
             matB_payload.template update_tdesc<update_dir_b>(
                     matB_t::tile_size_y);
-            if ((scale_load_addr_i % scale_addr_update_freq) == 0) {
+            if ((scale_load_addr_i % dequant_s) == 0) {
                 scale_payload.template update_tdesc<tdesc_update_dir::y_dir>(
                         scale_t::tile_size_y);
                 zero_pt_payload.template update_tdesc<tdesc_update_dir::y_dir>(
@@ -450,7 +450,7 @@ public:
                 //         matA_t::tile_size_x);
                 matB_prefetch_payload.template update_tdesc<update_dir_b>(
                         matB_t::tile_size_y);
-                // if ((scale_prefetch_addr_i % scale_addr_update_freq) == 0) {
+                // if ((scale_prefetch_addr_i % dequant_s) == 0) {
                 //     scale_prefetch_payload
                 //             .template update_tdesc<tdesc_update_dir::y_dir>(
                 //                     scale_t::tile_size_y);

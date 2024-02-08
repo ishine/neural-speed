@@ -247,7 +247,7 @@ public:
     static constexpr size_t dequant_s = 64;
     static constexpr size_t num_buffer = 64;
     static constexpr size_t local_kslicing = 8;
-    static constexpr size_t global_kslicing = 1;
+    static constexpr size_t global_kslicing = 2;
     static constexpr mem_layout layout_a = mem_layout::row_major;
     static constexpr mem_layout layout_b = mem_layout::row_major;
     using data_type_a = fp16;
@@ -288,10 +288,10 @@ int gemm_result_validate(data_type_a *A, data_type_b *B, data_type_c *C,
             m, n, k, mem_layout_a_, mem_layout_b_, A, B, gold_C.data());
 
     // BiasAdd
-//     for (uint32_t i = 0; i < gold_C.size(); ++i) {
-//         uint32_t col = i % n;
-//         gold_C[i] += bias[col];
-//     }
+    for (uint32_t i = 0; i < gold_C.size(); ++i) {
+        uint32_t col = i % n;
+        gold_C[i] += bias[col];
+    }
 
     buff_cmp::buff_vals<data_type_c, data_type_acc> other(
             gold_C.data(), m, n, n);
@@ -379,17 +379,17 @@ void dequantize_gemm_run(int iter) {
     using gemm_t = xetla::group::gemm_t<compute_policy, tile_shape,
             mem_desc_a_t, mem_desc_b_t>;
 
-//     using bias_op_t = gpu::xetla::subgroup::bias_add_op_t<mem_desc_bias_t,
-//             gpu_arch::Dg2>;
-//     using tile_op_t = gpu::xetla::subgroup::chained_tile_op_t<bias_op_t>;
-
-//     using epilogue_t = xetla::group::epilogue_t<
-//             xetla::group::epilogue_policy_tile_op<tile_op_t, gpu_arch::Dg2>,
-//             tile_shape, mem_desc_c_t>;
+    using bias_op_t = gpu::xetla::subgroup::bias_add_op_t<mem_desc_bias_t,
+            gpu_arch::Dg2>;
+    using tile_op_t = gpu::xetla::subgroup::chained_tile_op_t<bias_op_t>;
 
     using epilogue_t = xetla::group::epilogue_t<
-            xetla::group::epilogue_policy_default<gpu_arch::Dg2>, tile_shape,
-            mem_desc_c_t>;
+            xetla::group::epilogue_policy_tile_op<tile_op_t, gpu_arch::Dg2>,
+            tile_shape, mem_desc_c_t>;
+
+    using epilogue_t = xetla::group::epilogue_t<
+            xetla::group::epilogue_policy_tile_op<tile_op_t, gpu_arch::Dg2>,
+            tile_shape, mem_desc_c_t>;
 
     using group_swizzle = xetla::kernel::group_swizzle_default<gpu_arch::Dg2>;
     using gemm_op_t = xetla::kernel::gemm_universal_t<
@@ -498,18 +498,17 @@ void dequantize_gemm_run(int iter) {
             .wait();
 
     // set up gemm arguments
-//     typename bias_op_t::shape_t bias_add_shape(matrix_n, 1, matrix_n);
-//     using epilogue_args_t = epilogue_t::arguments_t;
+    typename bias_op_t::shape_t bias_add_shape(matrix_n, 1, matrix_n);
+    using epilogue_args_t = epilogue_t::arguments_t;
 
-//     epilogue_args_t epilogue_args({//epilogue_args init list
-//             // It accepts the base pointer to matrix D, and its dimensions
-//             {bias_d, bias_add_shape}});
+    epilogue_args_t epilogue_args({//epilogue_args init list
+            // It accepts the base pointer to matrix D, and its dimensions
+            {bias_d, bias_add_shape}});
 
     typename gemm_op_t::template arguments_t<compute_policy::quant_type>
             gemm_arg(matrix_m, matrix_k, matrix_n, A_d, matrix_k, B_d, matrix_n,
-                    C_d, matrix_n, scale_d, matrix_n, Acc_d, Cnt_d
-            );
-                //     epilogue_args);
+                    C_d, matrix_n, scale_d, matrix_n, Acc_d, Cnt_d,
+                    epilogue_args);
 
     cl::sycl::nd_range<3> nd_range = gemm_op_t::get_nd_range(gemm_arg);
     if (!gemm_op_t::can_implement(gemm_arg)) {
