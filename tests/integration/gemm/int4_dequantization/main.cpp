@@ -44,8 +44,8 @@ class qkv {
 public:
     //Extract the parameters required by different test cases
     static constexpr size_t mat_m = 1;
-    static constexpr size_t mat_n = 4096 * 3;
-    static constexpr size_t mat_k = 4096;
+    static constexpr size_t mat_n = 4096;
+    static constexpr size_t mat_k = 11008;
     static constexpr size_t wg_m = 8;
     static constexpr size_t wg_n = 32;
     static constexpr size_t sg_m = 8;

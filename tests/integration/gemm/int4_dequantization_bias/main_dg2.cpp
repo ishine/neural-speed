@@ -108,8 +108,8 @@ public:
 class qkv3 {
 public:
     //Extract the parameters required by different test cases
-    static constexpr size_t mat_m = 11008;
-    static constexpr size_t mat_n = 11008;
+    static constexpr size_t mat_m = 12288;
+    static constexpr size_t mat_n = 12288;
     static constexpr size_t mat_k = 4096;
     static constexpr size_t wg_m = 8;
     static constexpr size_t wg_n = 64;
@@ -246,7 +246,7 @@ public:
     static constexpr size_t sg_k = 16;
     static constexpr size_t dequant_s = 64;
     static constexpr size_t num_buffer = 64;
-    static constexpr size_t local_kslicing = 4;
+    static constexpr size_t local_kslicing = 8;
     static constexpr size_t global_kslicing = 1;
     static constexpr mem_layout layout_a = mem_layout::row_major;
     static constexpr mem_layout layout_b = mem_layout::row_major;
@@ -288,10 +288,10 @@ int gemm_result_validate(data_type_a *A, data_type_b *B, data_type_c *C,
             m, n, k, mem_layout_a_, mem_layout_b_, A, B, gold_C.data());
 
     // BiasAdd
-    for (uint32_t i = 0; i < gold_C.size(); ++i) {
-        uint32_t col = i % n;
-        gold_C[i] += bias[col];
-    }
+//     for (uint32_t i = 0; i < gold_C.size(); ++i) {
+//         uint32_t col = i % n;
+//         gold_C[i] += bias[col];
+//     }
 
     buff_cmp::buff_vals<data_type_c, data_type_acc> other(
             gold_C.data(), m, n, n);
@@ -379,13 +379,17 @@ void dequantize_gemm_run(int iter) {
     using gemm_t = xetla::group::gemm_t<compute_policy, tile_shape,
             mem_desc_a_t, mem_desc_b_t>;
 
-    using bias_op_t = gpu::xetla::subgroup::bias_add_op_t<mem_desc_bias_t,
-            gpu_arch::Dg2>;
-    using tile_op_t = gpu::xetla::subgroup::chained_tile_op_t<bias_op_t>;
+//     using bias_op_t = gpu::xetla::subgroup::bias_add_op_t<mem_desc_bias_t,
+//             gpu_arch::Dg2>;
+//     using tile_op_t = gpu::xetla::subgroup::chained_tile_op_t<bias_op_t>;
+
+//     using epilogue_t = xetla::group::epilogue_t<
+//             xetla::group::epilogue_policy_tile_op<tile_op_t, gpu_arch::Dg2>,
+//             tile_shape, mem_desc_c_t>;
 
     using epilogue_t = xetla::group::epilogue_t<
-            xetla::group::epilogue_policy_tile_op<tile_op_t, gpu_arch::Dg2>,
-            tile_shape, mem_desc_c_t>;
+            xetla::group::epilogue_policy_default<gpu_arch::Dg2>, tile_shape,
+            mem_desc_c_t>;
 
     using group_swizzle = xetla::kernel::group_swizzle_default<gpu_arch::Dg2>;
     using gemm_op_t = xetla::kernel::gemm_universal_t<
@@ -494,17 +498,18 @@ void dequantize_gemm_run(int iter) {
             .wait();
 
     // set up gemm arguments
-    typename bias_op_t::shape_t bias_add_shape(matrix_n, 1, matrix_n);
-    using epilogue_args_t = epilogue_t::arguments_t;
+//     typename bias_op_t::shape_t bias_add_shape(matrix_n, 1, matrix_n);
+//     using epilogue_args_t = epilogue_t::arguments_t;
 
-    epilogue_args_t epilogue_args({//epilogue_args init list
-            // It accepts the base pointer to matrix D, and its dimensions
-            {bias_d, bias_add_shape}});
+//     epilogue_args_t epilogue_args({//epilogue_args init list
+//             // It accepts the base pointer to matrix D, and its dimensions
+//             {bias_d, bias_add_shape}});
 
     typename gemm_op_t::template arguments_t<compute_policy::quant_type>
             gemm_arg(matrix_m, matrix_k, matrix_n, A_d, matrix_k, B_d, matrix_n,
-                    C_d, matrix_n, scale_d, matrix_n, Acc_d, Cnt_d,
-                    epilogue_args);
+                    C_d, matrix_n, scale_d, matrix_n, Acc_d, Cnt_d
+            );
+                //     epilogue_args);
 
     cl::sycl::nd_range<3> nd_range = gemm_op_t::get_nd_range(gemm_arg);
     if (!gemm_op_t::can_implement(gemm_arg)) {
@@ -539,28 +544,28 @@ void dequantize_gemm_run(int iter) {
     //performance
     prof.print_profiling_result(profiling_selector::GPU);
 
-//     std::vector<fp16> dequantize_b(matrix_k * matrix_n, 0);
-//     for (uint32_t i = 0; i < matrix_k / dequant_s; i++) {
-//         for (uint32_t j = 0; j < matrix_n / 2; j++) {
-//             int start_in = i * dequant_s * matrix_n / 2 + j;
-//             int start_out = i * dequant_s * matrix_n + j * 2;
-//             int start_scale = i * size_scale_n + j * 2;
-//             for (uint32_t ii = 0; ii < dequant_s; ii++) {
-//                 uint8_t data_in = B_h[start_in + ii * matrix_n / 2];
-//                 int8_t data_0 = int8_t(data_in & 0x0f) - 8;
-//                 int8_t data_1 = int8_t(data_in >> 4) - 8;
-//                 dequantize_b[start_out + ii * matrix_n]
-//                         = fp16(data_0) * scale_h[start_scale];
-//                 dequantize_b[start_out + ii * matrix_n + 1]
-//                         = fp16(data_1) * scale_h[start_scale + 1];
-//             }
-//         }
-//     }
+    std::vector<fp16> dequantize_b(matrix_k * matrix_n, 0);
+    for (uint32_t i = 0; i < matrix_k / dequant_s; i++) {
+        for (uint32_t j = 0; j < matrix_n / 2; j++) {
+            int start_in = i * dequant_s * matrix_n / 2 + j;
+            int start_out = i * dequant_s * matrix_n + j * 2;
+            int start_scale = i * size_scale_n + j * 2;
+            for (uint32_t ii = 0; ii < dequant_s; ii++) {
+                uint8_t data_in = B_h[start_in + ii * matrix_n / 2];
+                int8_t data_0 = int8_t(data_in & 0x0f) - 8;
+                int8_t data_1 = int8_t(data_in >> 4) - 8;
+                dequantize_b[start_out + ii * matrix_n]
+                        = fp16(data_0) * scale_h[start_scale];
+                dequantize_b[start_out + ii * matrix_n + 1]
+                        = fp16(data_1) * scale_h[start_scale + 1];
+            }
+        }
+    }
 
-//     queue.memcpy((void *)C_h, (void *)C_d, size_c * sizeof(data_type_c)).wait();
-//     ASSERT_EQ(0,
-//             gemm_result_validate(A_h, dequantize_b.data(), C_h, bias_h,
-//                     matrix_m, matrix_k, matrix_n));
+    queue.memcpy((void *)C_h, (void *)C_d, size_c * sizeof(data_type_c)).wait();
+    ASSERT_EQ(0,
+            gemm_result_validate(A_h, dequantize_b.data(), C_h, bias_h,
+                    matrix_m, matrix_k, matrix_n));
 
     free(A_h, context);
     free(B_h, context);
@@ -587,7 +592,7 @@ TYPED_TEST_P(dequantize_gemm_test, esimd) {
 }
 
 REGISTER_TYPED_TEST_SUITE_P(dequantize_gemm_test, esimd);
-using tests = ::testing::Types<qkv6>;
+using tests = ::testing::Types<qkv9>;
 // using tests = ::testing::Types<qkv1, qkv2, qkv3, qkv4, qkv5, qkv6, qkv7, qkv8,
 //         qkv9, qkv10>;
 
