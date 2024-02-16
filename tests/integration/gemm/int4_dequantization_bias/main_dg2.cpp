@@ -175,11 +175,11 @@ public:
     static constexpr size_t mat_n = 12288;
     static constexpr size_t mat_k = 4096;
     static constexpr size_t wg_m = 8;
-//     static constexpr size_t wg_n = 32;
+    //     static constexpr size_t wg_n = 32;
     static constexpr size_t wg_n = 64;
     static constexpr size_t sg_m = 8;
     static constexpr size_t sg_n = 16;
-//     static constexpr size_t sg_k = 32;
+    //     static constexpr size_t sg_k = 32;
     static constexpr size_t sg_k = 16;
     static constexpr size_t dequant_s = 64;
     static constexpr size_t num_buffer = 64;
@@ -300,6 +300,46 @@ int gemm_result_validate(data_type_a *A, data_type_b *B, data_type_c *C,
 
     std::cout << (!result ? "FAILED\n" : "PASSED\n");
     return result ? 0 : 1;
+}
+
+template <typename T>
+void shuf_tar(queue &q, T *act, int *idx, int m, int k) {
+    q.submit([&](handler &h) {
+        sycl::local_accessor<T> act_shuf_slm {256, h};
+        unsigned int *sync_ptr = malloc_shared<unsigned int>(1, q);
+        *sync_ptr = 0;
+        int dim_2 = 1024;
+        int dim_1 = (m * k + 1023) / 1024;
+        dim_1 = dim_1 > 1024 ? 1024 : dim_1;
+        int dim_0
+                = dim_1 == 1024 ? (m * k + 1024 * 1024 - 1) / (1024 * 1024) : 1;
+        // std::cout << dim_0 << " " << dim_1 << " " << dim_2 << std::endl;
+        // sycl::stream str(8192, 8192, h);
+        h.parallel_for(nd_range(sycl::range<3>(dim_0, dim_1, dim_2),
+                               sycl::range<3>(1, 1, 256)),
+                [=](nd_item<3> it) [[intel::reqd_sub_group_size(32)]] {
+                    auto linear_idx = it.get_global_linear_id();
+                    if (linear_idx < m * k) {
+                        auto k_offset = linear_idx % k;
+                        auto m_offset = linear_idx / k;
+                        auto shuf_idx = idx[k_offset];
+                        auto local_idx = it.get_local_linear_id();
+                        act_shuf_slm[local_idx] = act[m_offset * k + shuf_idx];
+                        if (local_idx == 0) {
+                            atomic_ref<unsigned int, memory_order::acq_rel,
+                                    memory_scope::device,
+                                    access::address_space::global_space>
+                                    sync_atomic(*sync_ptr);
+                            sync_atomic++;
+
+                            while (sync_atomic < m * k / 256)
+                                ;
+                        }
+                        it.barrier(access::fence_space::global_and_local);
+                        act[linear_idx] = act_shuf_slm[local_idx];
+                    }
+                });
+    });
 }
 
 template <class Test>
@@ -480,6 +520,16 @@ void dequantize_gemm_run(int iter) {
 #endif
     }
 
+    std::vector<int> shuf_idx(matrix_k);
+    for (int i = 0; i < matrix_k; i++)
+        shuf_idx[i] = i;
+    std::random_shuffle(shuf_idx.begin(), shuf_idx.end());
+    int *idx_device = aligned_alloc_device<int>(64, matrix_k, queue);
+    queue.submit([&](handler &h) {
+        h.memcpy(idx_device, shuf_idx.data(), matrix_k * sizeof(int));
+    });
+    queue.wait();
+
     queue.memcpy((void *)A_d, (void *)A_h, size_a * sizeof(data_type_a)).wait();
     queue.memcpy((void *)B_d, (void *)B_h, size_b * sizeof(data_type_b)).wait();
     queue.memcpy((void *)C_d, (void *)C_h, size_c * sizeof(data_type_c)).wait();
@@ -522,6 +572,8 @@ void dequantize_gemm_run(int iter) {
     try {
         for (int i = 0; i < iter; i++) {
             prof.cpu_start();
+            shuf_tar<half>(queue, A_d, idx_device, matrix_m, matrix_k);
+            queue.wait();
             auto e_esimd = queue.submit([&](handler &cgh) {
                 cgh.parallel_for(
                         nd_range, [=](nd_item<3> item) SYCL_ESIMD_KERNEL {
