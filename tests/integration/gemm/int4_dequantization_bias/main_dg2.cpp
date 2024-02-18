@@ -303,6 +303,15 @@ int gemm_result_validate(data_type_a *A, data_type_b *B, data_type_c *C,
 }
 
 template <typename T>
+void shuf_ref(int m, int k, int *idx, T *act) {
+    std::vector<T> act_bk(m * k);
+    memcpy(act_bk.data(), act, m * k * sizeof(T));
+    for (int i = 0; i < m; i++)
+        for (int j = 0; j < k; j++)
+            act[i * k + j] = act_bk[i * k + idx[j]];
+}
+
+template <typename T>
 void shuf_tar(queue &q, T *act, int *idx, int m, int k) {
     q.submit([&](handler &h) {
         sycl::local_accessor<T> act_shuf_slm {256, h};
@@ -572,8 +581,15 @@ void dequantize_gemm_run(int iter) {
     try {
         for (int i = 0; i < iter; i++) {
             prof.cpu_start();
-            shuf_tar<half>(queue, A_d, idx_device, matrix_m, matrix_k);
-            queue.wait();
+            //     shuf_tar<half>(queue, A_d, idx_device, matrix_m, matrix_k);
+            //     queue.wait();
+
+            queue.memcpy((void *)A_h, (void *)A_d, size_a * sizeof(data_type_a))
+                    .wait();
+            shuf_ref<half>(matrix_m, matrix_k, shuf_idx.data(),
+                    reinterpret_cast<half *>(A_h));
+            queue.memcpy((void *)A_d, (void *)A_h, size_a * sizeof(data_type_a))
+                    .wait();
             auto e_esimd = queue.submit([&](handler &cgh) {
                 cgh.parallel_for(
                         nd_range, [=](nd_item<3> item) SYCL_ESIMD_KERNEL {
