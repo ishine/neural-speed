@@ -43,7 +43,10 @@ struct ThreadProblem2D {
 class Scheduler2D {
  public:
   Scheduler2D() = default;
-  Scheduler2D(const Config2D& config) { update(config); }
+  Scheduler2D(const Config2D& config) {
+    printf("%d %d %d", config.threads, config.size[0], config.size[1]);
+    update(config);
+  }
   using ThreadProblem = ThreadProblem2D;
 
   virtual void getIndex(ThreadProblem& problem) const {

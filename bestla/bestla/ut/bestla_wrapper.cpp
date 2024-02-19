@@ -7,6 +7,14 @@ class UT_Fp32Fp32 {
  public:
   UT_Fp32Fp32() {
     UT_START();
+    printf("111111\n");
+    printf("%p\n", &DefaultThreading);
+    printf("%d\n", (&DefaultThreading)->num_threads());
+    printf("%d\n", DefaultThreading.num_threads());
+    parallel::IThreading* threading = &DefaultThreading;
+    printf("%d\n", threading->num_threads());
+    printf("2222\n");
+
 #ifdef JBLAS_UT_BENCHMARK
     benchmark_all(1, 4096, 4096, 32);
     benchmark_all(1024, 4096, 4096, 32);
@@ -116,7 +124,7 @@ class UT_Fp32Fp32 {
     }
   }
 };
-#ifdef JBLAS_UT_WRAPPER
+#ifdef BTLA_UT_WRAPPER
 static UT_Fp32Fp32 sUT_Fp32Fp32;
 #endif
 
@@ -269,7 +277,7 @@ class UT_U8S8S32 {
     }
   }
 };
-#ifdef JBLAS_UT_WRAPPER
+#ifdef BTLA_UT_WRAPPER
 static UT_U8S8S32 sUT_U8S8S32;
 #endif
 
@@ -393,7 +401,7 @@ class UT_S8S8S32 {
     }
   }
 };
-#ifdef JBLAS_UT_WRAPPER
+#ifdef BTLA_UT_WRAPPER
 static UT_S8S8S32 sUT_S8S8S32;
 #endif
 
@@ -499,7 +507,7 @@ class UT_Bf16Bf16Fp32 {
     }
   }
 };
-#ifdef JBLAS_UT_WRAPPER
+#ifdef BTLA_UT_WRAPPER
 static UT_Bf16Bf16Fp32 sUT_Bf16Bf16Fp32;
 #endif
 
@@ -602,7 +610,7 @@ class UT_Fp16Fp16Fp16 {
     }
   }
 };
-#ifdef JBLAS_UT_WRAPPER
+#ifdef BTLA_UT_WRAPPER
 static UT_Fp16Fp16Fp16 sUT_Fp16Fp16Fp16;
 #endif
 }  // namespace ut

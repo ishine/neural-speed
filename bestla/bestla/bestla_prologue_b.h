@@ -69,6 +69,10 @@ class WeightPack {
 
   // from KxN int8 symmetric weight to packed N//NtilexKPadxNTile int4 weight
   void packWeight(const int N, const int K, const Param& _param, parallel::IThreading* threading) {
+    printf("111111\n");
+    printf("%p\n", threading);
+    printf("%d\n", threading->num_threads());
+    printf("2222\n");
     parallel::Scheduler2D _para({threading->num_threads(), K, N, _GemmCore_T::KTILE, _GemmCore_T::NTILE});
     threading->parallel_for([&](int tidx) {
       parallel::ThreadProblem2D thdp{tidx};
@@ -178,6 +182,10 @@ class WeightKBlockNInteger {
     auto ssize = static_cast<size_t>(N) * nk_scale;
     auto Tscales = utils::amalloc<float>(ssize);
     auto Tzps = utils::amalloc<int8_t>(ptr->IsAsym() ? ssize : 0);
+    printf("111111\n");
+    printf("%p\n", threading);
+    printf("%d\n", threading->num_threads());
+    printf("2222\n");
     quantizeWeight(N, K, B, ldb, tmpq, Tscales, Tzps, ptr, threading);
     packQWeight(N, K, tmpq, N, Tscales, Tzps, ptr, threading);
     utils::afree(tmpq);
@@ -522,6 +530,10 @@ class WeightKBlockNInteger {
                       int8_t* zero_points, void* stor, parallel::IThreading* threading) {
     auto ptr = reinterpret_cast<StorageWeight*>(stor);
     int bsize = ptr->mBlockSize == -1 ? K : ptr->mBlockSize;
+    printf("111111\n");
+    printf("%p\n", threading);
+    printf("%d\n", threading->num_threads());
+    printf("2222\n");
     parallel::Scheduler2D _para({threading->num_threads(), K, N, bsize, 16});
     threading->parallel_for([&](int tidx) {
       parallel::ThreadProblem2D thdp({tidx});

@@ -17,7 +17,7 @@ option(BTLA_UT_PARALLEL "Enable unit test for parallel set" OFF)
 option(BTLA_UT_KERNEL_JIT "Enable unit test for jit kernels" OFF)
 option(BTLA_UT_KERNEL_INTRIN "Enable unit test for intrinsic kernels" OFF)
 option(BTLA_UT_KERNEL_WRAPPER "Enable unit test for runtime ISA kernels" OFF)
-option(BTLA_UT_NOASAN "Disable sanitize" OFF)
+option(BTLA_UT_NOASAN "Disable sanitize" ON)
 option(BTLA_UT_BENCHMARK "Benchmark ON may take a long time to finish all tests" ON)
 option(BTLA_UT_OPENMP "Use OpenMP" ON)
 
