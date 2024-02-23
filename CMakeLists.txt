@@ -13,6 +13,7 @@ else() # Windows
     # (needed on Windows only)
     # include (CMakeForceCompiler)
     # CMAKE_FORCE_CXX_COMPILER (icx-cl IntelDPCPP)
+    set(CMAKE_C_COMPILER icx-cl)
     set(CMAKE_CXX_COMPILER icx-cl)
     include (Platform/Windows-Clang)
     include(cmake/GTestExternal.cmake)

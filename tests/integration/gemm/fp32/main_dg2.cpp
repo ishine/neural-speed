@@ -283,6 +283,72 @@ void fpu_fp32_gemm_run(int iter) {
 	free(Cnt_d, context);
 }
 
+#if 0
+template <typename T>
+class fpu_fp32_gemm_test : public ::testing::Test {};
+TYPED_TEST_SUITE_P(fpu_fp32_gemm_test);
+
+TYPED_TEST_P(fpu_fp32_gemm_test, esimd) {
+	fpu_fp32_gemm_run<TypeParam>(ITER);
+}
+
+REGISTER_TYPED_TEST_SUITE_P(fpu_fp32_gemm_test, esimd);
+using tests = ::testing::Types<t1, t2, t3>;
+
+INSTANTIATE_TYPED_TEST_SUITE_P(
+	fpu_fp32_gemm_test_suite, fpu_fp32_gemm_test, tests);
+#endif
+
+
+class sycl1 {
+public:
+	static constexpr size_t mat_m = 64;
+	static constexpr size_t mat_n = 32;
+	static constexpr size_t mat_k = 16;
+	static int constexpr sub_size = 16;
+	static int constexpr thread_tile_m = 16;
+	static int constexpr thread_tile_n = 2;
+	static int constexpr group_m = 4;
+	static int constexpr group_n = 16;
+	using data_type_a = float;
+	using data_type_b = float;
+	using data_type_c = float;
+	using data_type_acc = float;
+};
+
+class sycl2 {
+public:
+	static constexpr size_t mat_m = 1024;
+	static constexpr size_t mat_n = 4096;
+	static constexpr size_t mat_k = 4096;
+	static int constexpr sub_size = 16;
+	static int constexpr thread_tile_m = 16;
+	static int constexpr thread_tile_n = 2;
+	static int constexpr group_m = 4;
+	static int constexpr group_n = 16;
+	using data_type_a = float;
+	using data_type_b = float;
+	using data_type_c = float;
+	using data_type_acc = float;
+};
+
+class sycl3 {
+public:
+	static constexpr size_t mat_m = 1024;
+	static constexpr size_t mat_n = 4096;
+	static constexpr size_t mat_k = 4096;
+	static int constexpr sub_size = 8;
+	static int constexpr thread_tile_m = 16;
+	static int constexpr thread_tile_n = 2;
+	static int constexpr group_m = 8;
+	static int constexpr group_n = 8;
+	using data_type_a = float;
+	using data_type_b = float;
+	using data_type_c = float;
+	using data_type_acc = float;
+};
+
+
 template <class Test>
 void sycl_fpu_fp32_gemm_run(int iter) {
 	using namespace gpu;
@@ -290,18 +356,11 @@ void sycl_fpu_fp32_gemm_run(int iter) {
 	constexpr size_t matrix_m = Test::mat_m;
 	constexpr size_t matrix_n = Test::mat_n;
 	constexpr size_t matrix_k = Test::mat_k;
-	constexpr uint32_t global_kslicing = Test::global_kslicing;
-	constexpr uint32_t local_kslicing = Test::local_kslicing;
 
-	constexpr size_t wg_tile_m = Test::wg_m;
-	constexpr size_t wg_tile_n = Test::wg_n;
-	constexpr size_t sg_tile_m = Test::sg_m;
-	constexpr size_t sg_tile_n = Test::sg_n;
-	constexpr size_t sg_tile_k = Test::sg_k;
 	using data_type_a = typename Test::data_type_a;
 	using data_type_b = typename Test::data_type_b;
 	using data_type_c = typename Test::data_type_c;
-	using data_type_acc = float;
+	using data_type_acc = typename Test::data_type_acc;
 
 	constexpr size_t size_a = matrix_m * matrix_k;
 	constexpr size_t size_b = matrix_k * matrix_n;
@@ -349,12 +408,9 @@ void sycl_fpu_fp32_gemm_run(int iter) {
 		C_h[i] = 0;
 	}
 
-
 	queue.memcpy((void*)A_d, (void*)A_h, size_a * sizeof(data_type_a)).wait();
 	queue.memcpy((void*)B_d, (void*)B_h, size_b * sizeof(data_type_b)).wait();
 	queue.memcpy((void*)C_d, (void*)C_h, size_c * sizeof(data_type_c)).wait();
-
-	cl::sycl::nd_range<2> nd_range = sycl::nd_range<2>{ sycl::range<2>{matrix_m,matrix_n },sycl::range<2>{wg_tile_m,wg_tile_n} };
 
 	size_t ops = 2 * matrix_m * matrix_n * matrix_k + matrix_m * matrix_n;
 	profiling_helper prof("dequantize_gemm", ops, "gflops");
@@ -363,10 +419,11 @@ void sycl_fpu_fp32_gemm_run(int iter) {
 		for (int i = 0; i < iter + warm; i++) {
 			if (i >= warm)
 				prof.cpu_start();
+#if 0
 			auto e_esimd = queue.submit([&](handler& cgh) {
 				sycl::stream out(65536, 128, cgh);
 				cgh.parallel_for(
-					sycl::range<1>{matrix_m / sg_tile_m * matrix_n / sg_tile_n}, [=](sycl::item<1> it) {
+					sycl::range<1>{matrix_m / sg_tile_m * matrix_n / sg_tile_n}, [=](sycl::item<1> it) [[intel::reqd_sub_group_size(16)]] {
 						int tid = int(it);
 						int tstride = matrix_n / sg_tile_n;
 						int tn = tid % tstride;
@@ -399,6 +456,54 @@ void sycl_fpu_fp32_gemm_run(int iter) {
 							}
 					});
 				});
+#else
+			sycl::range<2> group{ Test::group_m,Test::group_n };
+			sycl::range<2> problem{ matrix_m / Test::thread_tile_m, matrix_n / Test::thread_tile_n };
+			auto e_esimd = queue.submit([&](handler& cgh) {
+				sycl::stream out(65536, 512, cgh);
+				cgh.parallel_for(
+					sycl::nd_range<2>(problem, group), [=](sycl::nd_item<2> it) [[intel::reqd_sub_group_size(Test::sub_size)]] {
+						int groupm = it.get_group(0);
+						int groupn = it.get_group(1);
+						int globalId = it.get_global_linear_id();
+						auto sg = it.get_sub_group();
+						int sgSize = sg.get_local_range()[0];
+						int sgGroupId = sg.get_group_id()[0];
+						int sgId = sg.get_local_id()[0];
+						int constexpr TileM = Test::thread_tile_m;
+						int constexpr TileN = Test::thread_tile_n;
+						float tmp[TileM * TileN];
+						for (size_t im = 0; im < TileM * TileN; im++)
+							tmp[im] = 0.f;
+						int tm = groupm * Test::group_m + sgGroupId;
+						tm *= TileM;
+						int tn = groupn * Test::group_n + sgId;
+						tn *= TileN;
+	
+						for (size_t i = 0; i < matrix_k; i++)
+						{
+							float tmpB[TileN];
+							for (size_t in = 0; in < TileN; in++)
+							{
+								tmpB[in] = B_d[tn + in + i * matrix_n];
+							}
+							for (size_t im = 0; im < TileM; im++)
+							{
+								auto tmpA = A_d[(tm + im) * matrix_k + i];
+								for (size_t in = 0; in < TileN; in++)
+								{
+									tmp[im * TileN + in] += tmpA * tmpB[in];
+								}
+							}
+						}
+						for (size_t im = 0; im < TileM; im++)
+							for (size_t in = 0; in < TileN; in++)
+							{
+								C_d[(tm + im) * matrix_n + tn + in] = tmp[im * TileN + in];
+							}
+					});
+				});
+#endif
 			if (i >= warm) {
 				e_esimd.wait();
 				prof.cpu_end();
@@ -427,16 +532,15 @@ void sycl_fpu_fp32_gemm_run(int iter) {
 
 
 template <typename T>
-class fpu_fp32_gemm_test : public ::testing::Test {};
-TYPED_TEST_SUITE_P(fpu_fp32_gemm_test);
+class sycl_fp32_gemm_test : public ::testing::Test {};
+TYPED_TEST_SUITE_P(sycl_fp32_gemm_test);
 
-TYPED_TEST_P(fpu_fp32_gemm_test, esimd) {
+TYPED_TEST_P(sycl_fp32_gemm_test, sycl) {
 	sycl_fpu_fp32_gemm_run<TypeParam>(ITER);
-	//fpu_fp32_gemm_run<TypeParam>(ITER);
 }
 
-REGISTER_TYPED_TEST_SUITE_P(fpu_fp32_gemm_test, esimd);
-using tests = ::testing::Types<t1, t2, t3>;
+REGISTER_TYPED_TEST_SUITE_P(sycl_fp32_gemm_test, sycl);
+using tests_sycl = ::testing::Types<sycl1, sycl2, sycl3>;
 
 INSTANTIATE_TYPED_TEST_SUITE_P(
-	fpu_fp32_gemm_test_suite, fpu_fp32_gemm_test, tests);
+	sycl_fp32_gemm_test_suite, sycl_fp32_gemm_test, tests_sycl);
