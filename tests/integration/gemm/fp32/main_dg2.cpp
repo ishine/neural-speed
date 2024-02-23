@@ -337,11 +337,11 @@ public:
 	static constexpr size_t mat_m = 1024;
 	static constexpr size_t mat_n = 4096;
 	static constexpr size_t mat_k = 4096;
-	static int constexpr sub_size = 8;
-	static int constexpr thread_tile_m = 16;
-	static int constexpr thread_tile_n = 2;
-	static int constexpr group_m = 8;
-	static int constexpr group_n = 8;
+	static int constexpr sub_size = 16;
+	static int constexpr thread_tile_m = 8;
+	static int constexpr thread_tile_n = 4;
+	static int constexpr group_m = 4;
+	static int constexpr group_n = 16;
 	using data_type_a = float;
 	using data_type_b = float;
 	using data_type_c = float;
@@ -473,16 +473,21 @@ void sycl_fpu_fp32_gemm_run(int iter) {
 						int constexpr TileM = Test::thread_tile_m;
 						int constexpr TileN = Test::thread_tile_n;
 						float tmp[TileM * TileN];
-						for (size_t im = 0; im < TileM * TileN; im++)
-							tmp[im] = 0.f;
+						for (size_t im = 0; im < TileM; im++)
+							for (size_t in = 0; in < TileN; in++)
+								tmp[im * TileN + in] = 0.f;
+
 						int tm = groupm * Test::group_m + sgGroupId;
 						tm *= TileM;
 						int tn = groupn * Test::group_n + sgId;
 						tn *= TileN;
-	
+						int subn = groupn * Test::group_n * TileN;
+						using global_ptr =
+							sycl::multi_ptr<float, sycl::access::address_space::global_space>;
 						for (size_t i = 0; i < matrix_k; i++)
 						{
 							float tmpB[TileN];
+							//*(sycl::vec<float, TileN>*)tmpB = *(sycl::vec<float, TileN>*) & B_d[tn + i * matrix_n];
 							for (size_t in = 0; in < TileN; in++)
 							{
 								tmpB[in] = B_d[tn + in + i * matrix_n];
@@ -496,11 +501,13 @@ void sycl_fpu_fp32_gemm_run(int iter) {
 								}
 							}
 						}
-						for (size_t im = 0; im < TileM; im++)
+						for (size_t im = 0; im < TileM; im++) {
 							for (size_t in = 0; in < TileN; in++)
 							{
 								C_d[(tm + im) * matrix_n + tn + in] = tmp[im * TileN + in];
 							}
+						}
+
 					});
 				});
 #endif
