@@ -303,12 +303,13 @@ INSTANTIATE_TYPED_TEST_SUITE_P(
 class sycl1 {
 public:
 	static constexpr size_t mat_m = 64;
-	static constexpr size_t mat_n = 32;
-	static constexpr size_t mat_k = 16;
+	static constexpr size_t mat_n = 64;
+	static constexpr size_t mat_k = 32;
 	static int constexpr sub_size = 16;
-	static int constexpr thread_tile_m = 16;
-	static int constexpr thread_tile_n = 2;
-	static int constexpr group_m = 4;
+	static int constexpr thread_tile_m = 1;
+	static int constexpr thread_tile_n = 4;
+	static int constexpr thread_tile_k = 4;
+	static int constexpr group_m = 16;
 	static int constexpr group_n = 16;
 	using data_type_a = float;
 	using data_type_b = float;
@@ -322,10 +323,28 @@ public:
 	static constexpr size_t mat_n = 4096;
 	static constexpr size_t mat_k = 4096;
 	static int constexpr sub_size = 16;
-	static int constexpr thread_tile_m = 16;
-	static int constexpr thread_tile_n = 2;
-	static int constexpr group_m = 4;
+	static int constexpr thread_tile_m = 8;
+	static int constexpr thread_tile_n = 4;
+	static int constexpr thread_tile_k = 4;
+	static int constexpr group_m = 16;
 	static int constexpr group_n = 16;
+	using data_type_a = float;
+	using data_type_b = float;
+	using data_type_c = float;
+	using data_type_acc = float;
+};
+
+class sycl2_ {
+public:
+	static constexpr size_t mat_m = 1024;
+	static constexpr size_t mat_n = 4096;
+	static constexpr size_t mat_k = 4096;
+	static int constexpr sub_size = 16;
+	static int constexpr thread_tile_m = 8;
+	static int constexpr thread_tile_n = 4;
+	static int constexpr thread_tile_k = 4;
+	static int constexpr group_m = 16;
+	static int constexpr group_n = 32;
 	using data_type_a = float;
 	using data_type_b = float;
 	using data_type_c = float;
@@ -340,7 +359,8 @@ public:
 	static int constexpr sub_size = 16;
 	static int constexpr thread_tile_m = 8;
 	static int constexpr thread_tile_n = 4;
-	static int constexpr group_m = 4;
+	static int constexpr thread_tile_k = 4;
+	static int constexpr group_m = 8;
 	static int constexpr group_n = 16;
 	using data_type_a = float;
 	using data_type_b = float;
@@ -419,98 +439,91 @@ void sycl_fpu_fp32_gemm_run(int iter) {
 		for (int i = 0; i < iter + warm; i++) {
 			if (i >= warm)
 				prof.cpu_start();
-#if 0
+			int constexpr GroupM = Test::group_m;
+			int constexpr GroupN = Test::group_n;
+			int constexpr GroupWorkers = GroupM * GroupN;
+			int constexpr TileM = Test::thread_tile_m;
+			int constexpr TileN = Test::thread_tile_n;
+			int constexpr TileK = Test::thread_tile_k;
+			sycl::range<2> group{ GroupM,GroupN };
+			sycl::range<2> problem{ matrix_m / TileM, matrix_n / TileN };
 			auto e_esimd = queue.submit([&](handler& cgh) {
-				sycl::stream out(65536, 128, cgh);
-				cgh.parallel_for(
-					sycl::range<1>{matrix_m / sg_tile_m * matrix_n / sg_tile_n}, [=](sycl::item<1> it) [[intel::reqd_sub_group_size(16)]] {
-						int tid = int(it);
-						int tstride = matrix_n / sg_tile_n;
-						int tn = tid % tstride;
-						tn *= sg_tile_n;
-						int tm = tid / tstride;
-						tm *= sg_tile_m;
-						float tmp[sg_tile_m * sg_tile_n];
-						for (size_t im = 0; im < sg_tile_m * sg_tile_n; im++)
-							tmp[im] = 0.f;
-						for (size_t i = 0; i < matrix_k; i++)
+				sycl::accessor<float, 1, sycl::access::mode::read_write,
+				sycl::access::target::local>
+				slm_b(sycl::range(GroupN * TileK), cgh);
+			sycl::stream out(65536, 512, cgh);
+			cgh.parallel_for(
+				sycl::nd_range<2>(problem, group), [=](sycl::nd_item<2> it) [[intel::reqd_sub_group_size(Test::sub_size)]] {
+					int gm = it.get_group(0);
+					int gn = it.get_group(1);
+					int globalId = it.get_global_linear_id();
+					auto sg = it.get_sub_group();
+					int sgSize = sg.get_local_range()[0];
+					int sgGroupId = sg.get_group_id()[0];
+					int sgId = sg.get_local_id()[0];
+					float tmp[TileM * TileN];
+					for (size_t im = 0; im < TileM; im++)
+						for (size_t in = 0; in < TileN; in++)
+							tmp[im * TileN + in] = 0.f;
+
+					int tm = gm * GroupM + sgGroupId;
+					tm *= TileM;
+					int tn = gn * GroupN + sgId;
+					tn *= TileN;
+					int subn = gn * GroupN * TileN;
+					using global_ptr =
+						sycl::multi_ptr<float, sycl::access::address_space::global_space>;
+					for (size_t i = 0; i < matrix_k; i += TileK)
+					{
+						int constexpr SLM_B_Size = GroupN * TileN * TileK;
+						int constexpr Iter_PerWorker = SLM_B_Size / GroupWorkers;
+						static_assert(SLM_B_Size % GroupWorkers == 0);
+#if 0
+						for (size_t in = 0; in < Iter_PerWorker; in++) {
+							auto itemPos = sgGroupId * Test::sub_size + sgId + in * GroupWorkers;
+							auto itemPosK = itemPos / (GroupN * TileN);
+							auto itemPosN = itemPos % (GroupN * TileN);
+							slm_b[itemPos] = B_d[gn * GroupN * TileN + itemPosN + (i + itemPosK) * matrix_n];
+						}
+#else
+						if (sgGroupId < TileK)
 						{
-							float tmpB[sg_tile_n];
-							for (size_t in = 0; in < sg_tile_n; in++)
+							for (size_t in = 0; in < TileN; in++)
 							{
-								tmpB[in] = B_d[tn + in + i * matrix_n];
-							}
-							for (size_t im = 0; im < sg_tile_m; im++)
-							{
-								auto tmpA = A_d[(tm + im) * matrix_k + i];
-								for (size_t in = 0; in < sg_tile_n; in++)
-								{
-									tmp[im * sg_tile_n + in] += tmpA * tmpB[in];
-								}
+								slm_b[sgGroupId * GroupN * TileN + sgId * TileN + in] = B_d[tn + in + (i + sgGroupId) * matrix_n];
 							}
 						}
-						for (size_t im = 0; im < sg_tile_m; im++)
-							for (size_t in = 0; in < sg_tile_n; in++)
-							{
-								C_d[(tm + im) * matrix_n + tn + in] = tmp[im * sg_tile_n + in];
-							}
-					});
-				});
-#else
-			sycl::range<2> group{ Test::group_m,Test::group_n };
-			sycl::range<2> problem{ matrix_m / Test::thread_tile_m, matrix_n / Test::thread_tile_n };
-			auto e_esimd = queue.submit([&](handler& cgh) {
-				sycl::stream out(65536, 512, cgh);
-				cgh.parallel_for(
-					sycl::nd_range<2>(problem, group), [=](sycl::nd_item<2> it) [[intel::reqd_sub_group_size(Test::sub_size)]] {
-						int groupm = it.get_group(0);
-						int groupn = it.get_group(1);
-						int globalId = it.get_global_linear_id();
-						auto sg = it.get_sub_group();
-						int sgSize = sg.get_local_range()[0];
-						int sgGroupId = sg.get_group_id()[0];
-						int sgId = sg.get_local_id()[0];
-						int constexpr TileM = Test::thread_tile_m;
-						int constexpr TileN = Test::thread_tile_n;
-						float tmp[TileM * TileN];
-						for (size_t im = 0; im < TileM; im++)
-							for (size_t in = 0; in < TileN; in++)
-								tmp[im * TileN + in] = 0.f;
-
-						int tm = groupm * Test::group_m + sgGroupId;
-						tm *= TileM;
-						int tn = groupn * Test::group_n + sgId;
-						tn *= TileN;
-						int subn = groupn * Test::group_n * TileN;
-						using global_ptr =
-							sycl::multi_ptr<float, sycl::access::address_space::global_space>;
-						for (size_t i = 0; i < matrix_k; i++)
+#endif
+						it.barrier(sycl::access::fence_space::local_space);
+#pragma unroll(2)
+						for (size_t ik = 0; ik < TileK; ik++)
 						{
 							float tmpB[TileN];
-							//*(sycl::vec<float, TileN>*)tmpB = *(sycl::vec<float, TileN>*) & B_d[tn + i * matrix_n];
 							for (size_t in = 0; in < TileN; in++)
 							{
-								tmpB[in] = B_d[tn + in + i * matrix_n];
+								tmpB[in] = slm_b[sgId * TileN + in + ik * GroupN * TileN];
 							}
 							for (size_t im = 0; im < TileM; im++)
 							{
-								auto tmpA = A_d[(tm + im) * matrix_k + i];
+								auto tmpA = A_d[(tm + im) * matrix_k + i + ik];
 								for (size_t in = 0; in < TileN; in++)
 								{
 									tmp[im * TileN + in] += tmpA * tmpB[in];
 								}
 							}
 						}
-						for (size_t im = 0; im < TileM; im++) {
-							for (size_t in = 0; in < TileN; in++)
-							{
-								C_d[(tm + im) * matrix_n + tn + in] = tmp[im * TileN + in];
-							}
-						}
+						it.barrier(sycl::access::fence_space::local_space);
 
-					});
+					}
+					for (size_t im = 0; im < TileM; im++) {
+						for (size_t in = 0; in < TileN; in++)
+						{
+							C_d[(tm + im) * matrix_n + tn + in] = tmp[im * TileN + in];
+						}
+					}
+
 				});
-#endif
+				});
 			if (i >= warm) {
 				e_esimd.wait();
 				prof.cpu_end();
