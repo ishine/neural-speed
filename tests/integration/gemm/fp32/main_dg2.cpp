@@ -481,31 +481,38 @@ void sycl_fpu_fp32_gemm_run(int iter) {
 								slm_b[sgGroupId * GroupN * TileN + sgId * TileN + in] = B_d[tn + in + (i + sgGroupId) * matrix_n];
 							}
 						}
-						//						static_assert(TileK == SubSize);
-						//						for (size_t im = 0; im < TileM; im++)
-						//						{
-						//							//slm_a[(sgGroupId * TileM + im) + sgId * GroupM * TileM] = A_d[(tm + im) * matrix_k + i + sgId];
-						//							slm_a[(sgGroupId * TileM + im) * TileK + sgId] = A_d[(tm + im) * matrix_k + i + sgId];
-						//						}
+						static_assert(TileK == SubSize);
+						for (size_t im = 0; im < TileM; im++)
+						{
+							slm_a[(sgGroupId * TileM + im) + sgId * GroupM * TileM] = A_d[(tm + im) * matrix_k + i + sgId];
+							//slm_a[(sgGroupId * TileM + im) * TileK + sgId] = A_d[(tm + im) * matrix_k + i + sgId];
+						}
 #endif
 						it.barrier(sycl::access::fence_space::local_space);
-#pragma unroll(2)
-						for (size_t ik = 0; ik < TileK; ik++)
+						int constexpr UnrollK = 2;
+#pragma unroll(1)
+						for (size_t ik = 0; ik < TileK; ik += UnrollK)
 						{
-							float tmpB[TileN];
-							for (size_t in = 0; in < TileN; in++)
+#pragma unroll
+							for (size_t ikk = 0; ikk < UnrollK; ikk++)
 							{
-								tmpB[in] = slm_b[sgId * TileN + in + ik * GroupN * TileN];
-							}
-							for (size_t im = 0; im < TileM; im++)
-							{
-								//auto tmpA = slm_a[ik * GroupM * TileM + sgGroupId * TileM + im];
-								//auto tmpA = slm_a[ik + (sgGroupId * TileM + im) * TileK];
-								auto tmpA = A_d[(tm + im) * matrix_k + i + ik];
-								//auto tmpA = A_d[(tm + im)  + (i + ik)*matrix_m];
+								float tmpB[TileN];
+#pragma unroll
 								for (size_t in = 0; in < TileN; in++)
 								{
-									tmp[im * TileN + in] += tmpA * tmpB[in];
+									tmpB[in] = slm_b[sgId * TileN + in + (ik + ikk) * GroupN * TileN];
+
+								}
+#pragma unroll
+								for (size_t im = 0; im < TileM; im++)
+								{
+									//auto tmpA = A_d[(tm + im) * matrix_k + (i + ik + ikk)];
+									auto tmpA = slm_a[sgGroupId * TileM + im + (ik + ikk) * GroupM * TileM];
+#pragma unroll
+									for (size_t in = 0; in < TileN; in++)
+									{
+										tmp[im * TileN + in] += tmpA * tmpB[in];
+									}
 								}
 							}
 						}
