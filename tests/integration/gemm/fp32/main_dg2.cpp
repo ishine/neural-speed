@@ -325,26 +325,9 @@ public:
 	static int constexpr sub_size = 16;
 	static int constexpr thread_tile_m = 8;
 	static int constexpr thread_tile_n = 4;
-	static int constexpr thread_tile_k = 4;
-	static int constexpr group_m = 16;
+	static int constexpr thread_tile_k = 16;
+	static int constexpr group_m = 32;
 	static int constexpr group_n = 16;
-	using data_type_a = float;
-	using data_type_b = float;
-	using data_type_c = float;
-	using data_type_acc = float;
-};
-
-class sycl2_ {
-public:
-	static constexpr size_t mat_m = 1024;
-	static constexpr size_t mat_n = 4096;
-	static constexpr size_t mat_k = 4096;
-	static int constexpr sub_size = 16;
-	static int constexpr thread_tile_m = 8;
-	static int constexpr thread_tile_n = 4;
-	static int constexpr thread_tile_k = 4;
-	static int constexpr group_m = 16;
-	static int constexpr group_n = 32;
 	using data_type_a = float;
 	using data_type_b = float;
 	using data_type_c = float;
@@ -439,6 +422,7 @@ void sycl_fpu_fp32_gemm_run(int iter) {
 		for (int i = 0; i < iter + warm; i++) {
 			if (i >= warm)
 				prof.cpu_start();
+			auto constexpr SubSize = Test::sub_size;
 			int constexpr GroupM = Test::group_m;
 			int constexpr GroupN = Test::group_n;
 			int constexpr GroupWorkers = GroupM * GroupN;
@@ -447,13 +431,18 @@ void sycl_fpu_fp32_gemm_run(int iter) {
 			int constexpr TileK = Test::thread_tile_k;
 			sycl::range<2> group{ GroupM,GroupN };
 			sycl::range<2> problem{ matrix_m / TileM, matrix_n / TileN };
+			int constexpr SLM_B_Size = GroupN * TileN * TileK;
+			int constexpr SLM_A_Size = GroupM * TileM * TileK;
 			auto e_esimd = queue.submit([&](handler& cgh) {
 				sycl::accessor<float, 1, sycl::access::mode::read_write,
 				sycl::access::target::local>
-				slm_b(sycl::range(GroupN * TileK), cgh);
+				slm_b(sycl::range(SLM_B_Size), cgh);
+			sycl::accessor<float, 1, sycl::access::mode::read_write,
+				sycl::access::target::local>
+				slm_a(sycl::range(SLM_A_Size), cgh);
 			sycl::stream out(65536, 512, cgh);
 			cgh.parallel_for(
-				sycl::nd_range<2>(problem, group), [=](sycl::nd_item<2> it) [[intel::reqd_sub_group_size(Test::sub_size)]] {
+				sycl::nd_range<2>(problem, group), [=](sycl::nd_item<2> it) [[intel::reqd_sub_group_size(SubSize)]] {
 					int gm = it.get_group(0);
 					int gn = it.get_group(1);
 					int globalId = it.get_global_linear_id();
@@ -475,7 +464,6 @@ void sycl_fpu_fp32_gemm_run(int iter) {
 						sycl::multi_ptr<float, sycl::access::address_space::global_space>;
 					for (size_t i = 0; i < matrix_k; i += TileK)
 					{
-						int constexpr SLM_B_Size = GroupN * TileN * TileK;
 						int constexpr Iter_PerWorker = SLM_B_Size / GroupWorkers;
 						static_assert(SLM_B_Size % GroupWorkers == 0);
 #if 0
@@ -493,6 +481,12 @@ void sycl_fpu_fp32_gemm_run(int iter) {
 								slm_b[sgGroupId * GroupN * TileN + sgId * TileN + in] = B_d[tn + in + (i + sgGroupId) * matrix_n];
 							}
 						}
+						//						static_assert(TileK == SubSize);
+						//						for (size_t im = 0; im < TileM; im++)
+						//						{
+						//							//slm_a[(sgGroupId * TileM + im) + sgId * GroupM * TileM] = A_d[(tm + im) * matrix_k + i + sgId];
+						//							slm_a[(sgGroupId * TileM + im) * TileK + sgId] = A_d[(tm + im) * matrix_k + i + sgId];
+						//						}
 #endif
 						it.barrier(sycl::access::fence_space::local_space);
 #pragma unroll(2)
@@ -505,7 +499,10 @@ void sycl_fpu_fp32_gemm_run(int iter) {
 							}
 							for (size_t im = 0; im < TileM; im++)
 							{
+								//auto tmpA = slm_a[ik * GroupM * TileM + sgGroupId * TileM + im];
+								//auto tmpA = slm_a[ik + (sgGroupId * TileM + im) * TileK];
 								auto tmpA = A_d[(tm + im) * matrix_k + i + ik];
+								//auto tmpA = A_d[(tm + im)  + (i + ik)*matrix_m];
 								for (size_t in = 0; in < TileN; in++)
 								{
 									tmp[im * TileN + in] += tmpA * tmpB[in];
@@ -551,16 +548,214 @@ void sycl_fpu_fp32_gemm_run(int iter) {
 }
 
 
+class sycl2d_0 {
+public:
+	static constexpr size_t mat_m = 1024;
+	static constexpr size_t mat_n = 4096;
+	static constexpr size_t mat_k = 4096;
+	static int constexpr sub_size = 16;
+	static int constexpr thread_tile_m = 8;
+	static int constexpr thread_tile_n = 4;
+	static int constexpr thread_tile_k = 16;
+	static int constexpr group_m = 32;
+	static int constexpr group_n = 32;
+	using data_type_a = float;
+	using data_type_b = float;
+	using data_type_c = float;
+	using data_type_acc = float;
+};
+template <class Test>
+void sycl2d_fpu_fp32_gemm_run(int iter) {
+	using namespace gpu;
+	// Accept incoming parameters
+	constexpr size_t matrix_m = Test::mat_m;
+	constexpr size_t matrix_n = Test::mat_n;
+	constexpr size_t matrix_k = Test::mat_k;
+
+	using data_type_a = typename Test::data_type_a;
+	using data_type_b = typename Test::data_type_b;
+	using data_type_c = typename Test::data_type_c;
+	using data_type_acc = typename Test::data_type_acc;
+
+	constexpr size_t size_a = matrix_m * matrix_k;
+	constexpr size_t size_b = matrix_k * matrix_n;
+	constexpr size_t size_c = matrix_m * matrix_n;
+
+	// Turn on the enable_profiling property to facilitate subsequent profiling
+	sycl::property_list properties{ sycl::property::queue::enable_profiling() };
+	auto queue = sycl::queue(properties);
+	auto context = queue.get_info<info::queue::context>();
+	auto device = queue.get_info<info::queue::device>();
+
+	std::cout << "Running on " << device.get_info<info::device::name>() << "\n";
+
+
+	//Define and initialize the data required for the calculation
+	auto* A_h = static_cast<data_type_a*>(
+		malloc_host(size_a * sizeof(data_type_a), context));
+	auto* B_h = static_cast<data_type_b*>(
+		malloc_host(size_b * sizeof(data_type_b), context));
+	auto* C_h = static_cast<data_type_c*>(
+		malloc_host(size_c * sizeof(data_type_c), context));
+
+	auto* A_d = static_cast<data_type_a*>(
+		aligned_alloc_device(DEVICE_MEM_ALIGNMENT,
+			size_a * sizeof(data_type_a), device, context));
+	auto* B_d = static_cast<data_type_b*>(
+		aligned_alloc_device(DEVICE_MEM_ALIGNMENT,
+			size_b * sizeof(data_type_b), device, context));
+	auto* C_d = static_cast<data_type_c*>(
+		aligned_alloc_device(DEVICE_MEM_ALIGNMENT,
+			size_c * sizeof(data_type_c), device, context));
+
+	for (unsigned i = 0; i < size_a; ++i) {
+		A_h[i] = random_float();
+	}
+	for (unsigned i = 0; i < size_b; ++i) {
+		B_h[i] = random_float();
+	}
+
+	for (unsigned i = 0; i < size_c; ++i) {
+		C_h[i] = 0;
+	}
+
+	queue.memcpy((void*)A_d, (void*)A_h, size_a * sizeof(data_type_a)).wait();
+	queue.memcpy((void*)B_d, (void*)B_h, size_b * sizeof(data_type_b)).wait();
+	queue.memcpy((void*)C_d, (void*)C_h, size_c * sizeof(data_type_c)).wait();
+
+	size_t ops = 2 * matrix_m * matrix_n * matrix_k + matrix_m * matrix_n;
+	profiling_helper prof("dequantize_gemm", ops, "gflops");
+	int constexpr warm = 10;
+	try {
+		for (int i = 0; i < iter + warm; i++) {
+			if (i >= warm)
+				prof.cpu_start();
+			int constexpr SubSize = Test::sub_size;
+			int constexpr GroupM = Test::group_m;
+			int constexpr GroupN = Test::group_n;
+			auto constexpr SubNStride = GroupN / SubSize;
+			int constexpr GroupWorkers = GroupM * GroupN;
+			int constexpr TileM = Test::thread_tile_m;
+			int constexpr TileN = Test::thread_tile_n;
+			int constexpr TileK = Test::thread_tile_k;
+			int constexpr GroupNEle = GroupN * TileN;
+			int constexpr SubGroupNEle = SubSize * TileN;
+			int constexpr SLM_B_Size = GroupNEle * TileK;
+			sycl::range<2> group{ GroupM,GroupN };
+			sycl::range<2> problem{ matrix_m / TileM, matrix_n / TileN };
+			auto e_esimd = queue.submit([&](handler& cgh) {
+				sycl::accessor<float, 1, sycl::access::mode::read_write,
+				sycl::access::target::local>
+				slm_b(sycl::range(SLM_B_Size), cgh);
+			sycl::stream out(65536, 512, cgh);
+			cgh.parallel_for(
+				sycl::nd_range<2>(problem, group), [=](sycl::nd_item<2> it) [[intel::reqd_sub_group_size(SubSize)]] {
+					int g_idxm = it.get_group(0);
+					int g_idxn = it.get_group(1);
+					auto sg = it.get_sub_group();
+					int sgGroupId = sg.get_group_id()[0];
+					int sgId = sg.get_local_id()[0];
+					float tmp[TileM * TileN];
+					for (size_t im = 0; im < TileM; im++)
+						for (size_t in = 0; in < TileN; in++)
+							tmp[im * TileN + in] = 0.f;
+					int sg_idxn = sgGroupId % SubNStride;
+					int sg_idxm = sgGroupId / SubNStride;
+					int gm = g_idxm * GroupM;
+					int gn = g_idxn * GroupN;
+					int sgm = gm + sg_idxm;
+					int sgn = gn + sg_idxn * SubSize;
+					int tm = sgm * TileM;
+					int tn = (sgn + sgId) * TileN;
+
+					for (size_t i = 0; i < matrix_k; i += TileK)
+					{
+						int constexpr Iter_PerWorker = (TileK + GroupM - 1) / GroupM;
+						for (size_t icp = 0; icp < Iter_PerWorker; icp++)
+						{
+							if (sg_idxm + icp * GroupM < TileK)
+							{
+								for (size_t in = 0; in < TileN; in++)
+								{
+									slm_b[(sg_idxm + icp * GroupM) * GroupNEle + (sg_idxn * SubSize + sgId) * TileN + in] = B_d[tn + in + (i + sg_idxm + icp * GroupM) * matrix_n];
+								}
+							}
+						}
+
+						it.barrier(sycl::access::fence_space::local_space);
+#pragma unroll(2)
+						for (size_t ik = 0; ik < TileK; ik++)
+						{
+							float tmpB[TileN];
+							for (size_t in = 0; in < TileN; in++)
+							{
+								tmpB[in] = slm_b[sg_idxn * SubGroupNEle + sgId * TileN + in + ik * GroupNEle];
+							}
+							for (size_t im = 0; im < TileM; im++)
+							{
+								auto tmpA = A_d[(tm + im) * matrix_k + i + ik];
+								for (size_t in = 0; in < TileN; in++)
+								{
+									tmp[im * TileN + in] += tmpA * tmpB[in];
+								}
+							}
+						}
+						it.barrier(sycl::access::fence_space::local_space);
+
+					}
+					for (size_t im = 0; im < TileM; im++) {
+						for (size_t in = 0; in < TileN; in++)
+						{
+							C_d[(tm + im) * matrix_n + tn + in] = tmp[im * TileN + in];
+						}
+					}
+				});
+				});
+			if (i >= warm) {
+				e_esimd.wait();
+				prof.cpu_end();
+				prof.add_gpu_event(e_esimd);
+			}
+		}
+	}
+	catch (cl::sycl::exception const& e) {
+		std::cout << "SYCL exception caught: " << e.what() << '\n';
+		FAIL();
+	}
+
+	//performance
+	prof.print_profiling_result(profiling_selector::GPU);
+	queue.memcpy((void*)C_h, (void*)C_d, size_c * sizeof(data_type_c)).wait();
+	ASSERT_EQ(0,
+		gemm_result_validate(A_h, B_h, C_h, matrix_m, matrix_k, matrix_n));
+
+	free(A_h, context);
+	free(B_h, context);
+	free(C_h, context);
+	free(A_d, context);
+	free(B_d, context);
+	free(C_d, context);
+}
+
+
 template <typename T>
 class sycl_fp32_gemm_test : public ::testing::Test {};
 TYPED_TEST_SUITE_P(sycl_fp32_gemm_test);
-
+//#define SYCL2D
 TYPED_TEST_P(sycl_fp32_gemm_test, sycl) {
+#ifdef SYCL2D
+	sycl2d_fpu_fp32_gemm_run<TypeParam>(ITER);
+#else
 	sycl_fpu_fp32_gemm_run<TypeParam>(ITER);
+#endif
 }
 
 REGISTER_TYPED_TEST_SUITE_P(sycl_fp32_gemm_test, sycl);
-using tests_sycl = ::testing::Types<sycl1, sycl2, sycl3>;
+#ifdef SYCL2D
+using tests_sycl = ::testing::Types<sycl2d_0>;
+#else
+using tests_sycl = ::testing::Types<sycl2>;
+#endif
 
 INSTANTIATE_TYPED_TEST_SUITE_P(
 	sycl_fp32_gemm_test_suite, sycl_fp32_gemm_test, tests_sycl);
