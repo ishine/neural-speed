@@ -431,15 +431,14 @@ void sycl_fpu_fp32_gemm_run(int iter) {
 			int constexpr TileK = Test::thread_tile_k;
 			sycl::range<2> group{ GroupM,GroupN };
 			sycl::range<2> problem{ matrix_m / TileM, matrix_n / TileN };
-			int constexpr SLM_B_Size = GroupN * TileN * TileK;
+			int constexpr SLM_B_Stride = GroupN * TileN + 0;
+			int constexpr SLM_B_Size = SLM_B_Stride * TileK;
 			int constexpr SLM_A_Size = GroupM * TileM * TileK;
 			auto e_esimd = queue.submit([&](handler& cgh) {
 				sycl::accessor<float, 1, sycl::access::mode::read_write,
 				sycl::access::target::local>
-				slm_b(sycl::range(SLM_B_Size), cgh);
-			sycl::accessor<float, 1, sycl::access::mode::read_write,
-				sycl::access::target::local>
-				slm_a(sycl::range(SLM_A_Size), cgh);
+				slm_b(sycl::range(SLM_B_Size * 1), cgh);
+
 			sycl::stream out(65536, 512, cgh);
 			cgh.parallel_for(
 				sycl::nd_range<2>(problem, group), [=](sycl::nd_item<2> it) [[intel::reqd_sub_group_size(SubSize)]] {
@@ -460,59 +459,38 @@ void sycl_fpu_fp32_gemm_run(int iter) {
 					int tn = gn * GroupN + sgId;
 					tn *= TileN;
 					int subn = gn * GroupN * TileN;
-					using global_ptr =
-						sycl::multi_ptr<float, sycl::access::address_space::global_space>;
-					for (size_t i = 0; i < matrix_k; i += TileK)
+					size_t i = 0;
+
+					for (; i < matrix_k; i += TileK)
 					{
-						int constexpr Iter_PerWorker = SLM_B_Size / GroupWorkers;
-						static_assert(SLM_B_Size % GroupWorkers == 0);
-#if 0
-						for (size_t in = 0; in < Iter_PerWorker; in++) {
-							auto itemPos = sgGroupId * Test::sub_size + sgId + in * GroupWorkers;
-							auto itemPosK = itemPos / (GroupN * TileN);
-							auto itemPosN = itemPos % (GroupN * TileN);
-							slm_b[itemPos] = B_d[gn * GroupN * TileN + itemPosN + (i + itemPosK) * matrix_n];
-						}
-#else
 						if (sgGroupId < TileK)
 						{
 							for (size_t in = 0; in < TileN; in++)
 							{
-								slm_b[sgGroupId * GroupN * TileN + sgId * TileN + in] = B_d[tn + in + (i + sgGroupId) * matrix_n];
+								slm_b[sgGroupId * SLM_B_Stride + sgId * TileN + in] = B_d[tn + in + (i + sgGroupId) * matrix_n];
 							}
 						}
-						static_assert(TileK == SubSize);
-						for (size_t im = 0; im < TileM; im++)
-						{
-							slm_a[(sgGroupId * TileM + im) + sgId * GroupM * TileM] = A_d[(tm + im) * matrix_k + i + sgId];
-							//slm_a[(sgGroupId * TileM + im) * TileK + sgId] = A_d[(tm + im) * matrix_k + i + sgId];
-						}
-#endif
 						it.barrier(sycl::access::fence_space::local_space);
 						int constexpr UnrollK = 2;
-#pragma unroll(1)
-						for (size_t ik = 0; ik < TileK; ik += UnrollK)
+#pragma unroll(UnrollK)
+						for (size_t ik = 0; ik < TileK; ik += 1)
 						{
-#pragma unroll
-							for (size_t ikk = 0; ikk < UnrollK; ikk++)
+							float tmpB[TileN];
+							for (size_t in = 0; in < TileN; in++)
 							{
-								float tmpB[TileN];
-#pragma unroll
+								tmpB[in] = slm_b[sgId * TileN + in + (ik)*SLM_B_Stride];
+							}
+							//static_assert(SubSize == TileM);
+							//auto tmpA = sgId < TileM ? A_d[(tm + sgId) * matrix_k + (i + ik)] : 0.f;
+							for (size_t im = 0; im < TileM; im++)
+							{
+								auto tmpA = A_d[(tm + im) * matrix_k + (i + ik)];
+								//auto tmpA = A_d[(tm+im) + (i + ik) * matrix_m];
+								//auto tmpA = slm_a[sgGroupId * TileM + im + (ik)*GroupM * TileM];
+								//auto A = sg.shuffle(tmpA, im);
 								for (size_t in = 0; in < TileN; in++)
 								{
-									tmpB[in] = slm_b[sgId * TileN + in + (ik + ikk) * GroupN * TileN];
-
-								}
-#pragma unroll
-								for (size_t im = 0; im < TileM; im++)
-								{
-									//auto tmpA = A_d[(tm + im) * matrix_k + (i + ik + ikk)];
-									auto tmpA = slm_a[sgGroupId * TileM + im + (ik + ikk) * GroupM * TileM];
-#pragma unroll
-									for (size_t in = 0; in < TileN; in++)
-									{
-										tmp[im * TileN + in] += tmpA * tmpB[in];
-									}
+									tmp[im * TileN + in] += tmpA * tmpB[in];
 								}
 							}
 						}
@@ -642,18 +620,24 @@ void sycl2d_fpu_fp32_gemm_run(int iter) {
 			int constexpr GroupN = Test::group_n;
 			auto constexpr SubNStride = GroupN / SubSize;
 			int constexpr GroupWorkers = GroupM * GroupN;
+			int constexpr SubCount = GroupWorkers / SubSize;
 			int constexpr TileM = Test::thread_tile_m;
 			int constexpr TileN = Test::thread_tile_n;
 			int constexpr TileK = Test::thread_tile_k;
 			int constexpr GroupNEle = GroupN * TileN;
+			int constexpr GroupMEle = GroupM * TileM;
 			int constexpr SubGroupNEle = SubSize * TileN;
 			int constexpr SLM_B_Size = GroupNEle * TileK;
+			int constexpr SLM_A_Size = GroupMEle * TileK;
 			sycl::range<2> group{ GroupM,GroupN };
 			sycl::range<2> problem{ matrix_m / TileM, matrix_n / TileN };
 			auto e_esimd = queue.submit([&](handler& cgh) {
 				sycl::accessor<float, 1, sycl::access::mode::read_write,
 				sycl::access::target::local>
 				slm_b(sycl::range(SLM_B_Size), cgh);
+			sycl::accessor<float, 1, sycl::access::mode::read_write,
+				sycl::access::target::local>
+				slm_a(sycl::range(SLM_A_Size), cgh);
 			sycl::stream out(65536, 512, cgh);
 			cgh.parallel_for(
 				sycl::nd_range<2>(problem, group), [=](sycl::nd_item<2> it) [[intel::reqd_sub_group_size(SubSize)]] {
@@ -688,7 +672,16 @@ void sycl2d_fpu_fp32_gemm_run(int iter) {
 								}
 							}
 						}
-
+						/*static_assert(TileK == SubSize);
+						int constexpr IterA_PerWorker = (GroupMEle + SubCount - 1) / SubCount;
+						for (size_t icp = 0; icp < IterA_PerWorker; icp++)
+						{
+							auto t_gm = sgGroupId + icp * SubCount;
+							if (t_gm < GroupMEle)
+							{
+								slm_a[t_gm + sgId * GroupMEle] = A_d[(gm * TileM + t_gm) * matrix_k + sgId + i];
+							}
+						}*/
 						it.barrier(sycl::access::fence_space::local_space);
 #pragma unroll(2)
 						for (size_t ik = 0; ik < TileK; ik++)
@@ -701,6 +694,8 @@ void sycl2d_fpu_fp32_gemm_run(int iter) {
 							for (size_t im = 0; im < TileM; im++)
 							{
 								auto tmpA = A_d[(tm + im) * matrix_k + i + ik];
+								//auto tmpA = A_d[(tm + im)  + (i + ik) * matrix_m];
+								//auto tmpA = slm_a[(sg_idxm * TileM + im) + ik * GroupMEle];
 								for (size_t in = 0; in < TileN; in++)
 								{
 									tmp[im * TileN + in] += tmpA * tmpB[in];
